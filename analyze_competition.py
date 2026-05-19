@@ -3,64 +3,64 @@ import json
 import os
 import sys
 import re
-from datetime import datetime
-from urllib.parse import urljoin, urlparse
+import asyncio
 
-import requests
+import google.generativeai as genai
+from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
-from anthropic import Anthropic
 
-client = Anthropic()
+def setup_gemini():
+    """Setup Google Gemini API."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("❌ GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
+        sys.exit(1)
+    genai.configure(api_key=api_key)
 
-def fetch_url(url: str) -> str:
-    """Fetch URL and return HTML content."""
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = response.apparent_encoding or 'utf-8'
-        return response.text
-    except Exception as e:
-        return f"Error fetching URL: {str(e)}"
+async def fetch_url_playwright(url: str) -> str:
+    """Fetch URL using Playwright and return rendered HTML."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            content = await page.content()
+            await browser.close()
+            return content
+        except Exception as e:
+            await browser.close()
+            return f"Error fetching URL: {str(e)}"
 
 def extract_text_from_html(html: str, max_chars: int = 8000) -> str:
     """Extract meaningful text from HTML."""
     soup = BeautifulSoup(html, 'html.parser')
 
-    # Remove script and style elements
     for script in soup(["script", "style", "nav", "footer"]):
         script.decompose()
 
-    # Extract text
     text = soup.get_text(separator='\n', strip=True)
-
-    # Clean up whitespace
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     text = '\n'.join(lines)
 
-    # Limit to max_chars for token efficiency
     return text[:max_chars]
 
 def extract_structured_data(html: str) -> dict:
     """Extract structured data like awards, years, and tech mentions."""
     soup = BeautifulSoup(html, 'html.parser')
 
-    # Look for award/prize information
     awards = []
     years = set()
     techs = set()
 
-    # Find potential award entries
     for elem in soup.find_all(['h2', 'h3', 'div', 'li']):
         text = elem.get_text(strip=True)
         if any(keyword in text.lower() for keyword in ['award', 'prize', 'winner', '수상', '입상', '우승']):
             awards.append(text[:200])
-        # Extract years
+
         year_match = re.findall(r'20\d{2}', text)
         years.update(year_match)
-        # Extract tech keywords
-        tech_keywords = ['AI', 'ML', 'IoT', 'blockchain', 'cloud', 'web3', 'AR', 'VR', 'python', 'java', 'react', 'node', 'database', '인공지능', 'AI', 'IoT', 'blockchain']
+
+        tech_keywords = ['AI', 'ML', 'IoT', 'blockchain', 'cloud', 'web3', 'AR', 'VR', 'python', 'java', 'react', 'node', 'database', '인공지능']
         for tech in tech_keywords:
             if tech.lower() in text.lower():
                 techs.add(tech)
@@ -71,8 +71,8 @@ def extract_structured_data(html: str) -> dict:
         'tech_mentions': list(techs)[:10]
     }
 
-def analyze_with_claude(url: str, html_content: str) -> dict:
-    """Analyze content using Claude Haiku with prompt caching."""
+def analyze_with_gemini(url: str, html_content: str) -> dict:
+    """Analyze content using Google Gemini API."""
     text_content = extract_text_from_html(html_content)
     structured_data = extract_structured_data(html_content)
 
@@ -102,7 +102,7 @@ JSON 형식으로 응답:
   "ideas": [
     {{
       "title": "아이디어 제목",
-      "description": "설명 (50자 이내)",
+      "description": "설명",
       "tech_stack": ["기술1", "기술2", ...],
       "flow_diagram": "ASCII 다이어그램"
     }}
@@ -110,56 +110,55 @@ JSON 형식으로 응답:
 }}
 """
 
-    response = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=1024,
-        system=[
-            {
-                "type": "text",
-                "text": "당신은 기술 트렌드 분석 전문가입니다. 대회/공모전 웹사이트에서 추출한 정보를 분석하여 경쟁력 있는 프로젝트 아이디어를 제시합니다. 응답은 항상 유효한 JSON 형식이어야 합니다.",
-                "cache_control": {"type": "ephemeral"}
-            }
-        ],
-        messages=[
-            {
-                "role": "user",
-                "content": analysis_prompt
-            }
-        ]
-    )
-
     try:
-        result_text = response.content[0].text
-        # Try to extract JSON from response
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(
+            analysis_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=1024,
+            )
+        )
+
+        result_text = response.text
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if json_match:
             return json.loads(json_match.group())
-    except (json.JSONDecodeError, IndexError):
+    except json.JSONDecodeError:
         pass
+    except Exception as e:
+        print(f"⚠️ Gemini API 오류: {e}")
+        return {
+            "awards_analysis": "분석 실패",
+            "tech_trends": [],
+            "ideas": [],
+            "error": str(e)
+        }
 
     return {
         "awards_analysis": "분석 실패",
         "tech_trends": [],
-        "ideas": [],
-        "raw_response": result_text
+        "ideas": []
     }
 
-def main():
+async def main():
     if len(sys.argv) < 2:
         print("사용법: python analyze_competition.py <URL>")
         sys.exit(1)
 
     url = sys.argv[1]
+    setup_gemini()
 
-    print(f"분석 중: {url}")
-    html = fetch_url(url)
+    print(f"🌐 Playwright로 웹사이트 렌더링 중: {url}")
+    html = await fetch_url_playwright(url)
 
     if html.startswith("Error"):
         print(html)
         sys.exit(1)
 
-    result = analyze_with_claude(url, html)
+    print("📊 Google Gemini로 분석 중...")
+    result = analyze_with_gemini(url, html)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
