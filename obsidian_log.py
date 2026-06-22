@@ -25,23 +25,38 @@ def dday(deadline_iso: str, today: dt.date) -> str:
     return f"마감(+{-delta})"
 
 
+def _safe(s) -> str:
+    """본문/메타에 들어가는 분석 텍스트가 HTML 주석 마커를 위조하지 못하게 무력화."""
+    return str(s).replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+
+
+def _line(s) -> str:
+    """단일 행 컨텍스트용: 마커 무력화 + 개행 제거."""
+    return _safe(s).replace("\r", " ").replace("\n", " ").strip()
+
+
+def _cell(s) -> str:
+    """마크다운 표 셀용: 단일 행 + 파이프 이스케이프."""
+    return _line(s).replace("|", "\\|")
+
+
 def _bullets(items, empty="- (명시 없음)"):
-    items = [str(i).strip() for i in (items or []) if str(i).strip()]
+    items = [_line(i) for i in (items or []) if str(i).strip()]
     return "\n".join(f"- {i}" for i in items) or empty
 
 
 def _checklist(items):
-    items = [str(i).strip() for i in (items or []) if str(i).strip()]
+    items = [_line(i) for i in (items or []) if str(i).strip()]
     return "\n".join(f"- [ ] {i}" for i in items) or "- [ ] (공고 확인 필요)"
 
 
 def _idea_block(idea: dict) -> str:
-    title = idea.get("title", "(제목 없음)")
-    anchor = idea.get("trend_anchor", "")
+    title = _line(idea.get("title", "(제목 없음)"))
+    anchor = _line(idea.get("trend_anchor", ""))
     head = f"#### {title}" + (f"  · 트렌드: {anchor}" if anchor else "")
-    tech = ", ".join(idea.get("tech_stack") or [])
-    flow = (idea.get("flow_diagram") or "").rstrip()
-    parts = [head, idea.get("description", "")]
+    tech = ", ".join(_line(t) for t in (idea.get("tech_stack") or []))
+    flow = _safe(idea.get("flow_diagram") or "").rstrip()
+    parts = [head, _safe(idea.get("description", ""))]
     if tech:
         parts.append(f"- tech: {tech}")
     if flow:
@@ -52,10 +67,10 @@ def _idea_block(idea: dict) -> str:
 def _meta_dict(result: dict, url: str, today: dt.date) -> dict:
     tf = result.get("trend_fit") or {}
     return {
-        "title": result.get("title", "(제목 없음)"),
-        "url": url,
-        "deadline": result.get("deadline", ""),
-        "deadline_iso": result.get("deadline_iso", ""),
+        "title": _line(result.get("title", "(제목 없음)")),
+        "url": _line(url),
+        "deadline": _line(result.get("deadline", "")),
+        "deadline_iso": _line(result.get("deadline_iso", "")),
         "dday": dday(result.get("deadline_iso", ""), today),
         "trend_score": tf.get("score", ""),
         "analyzed": today.isoformat(),
@@ -65,29 +80,30 @@ def _meta_dict(result: dict, url: str, today: dt.date) -> dict:
 def render_section(result: dict, url: str, today: dt.date) -> str:
     """분석 결과 1건을 사람이 읽는 마크다운 섹션으로. 업서트용 마커/메타 포함."""
     m = _meta_dict(result, url, today)
+    safe_url = m["url"]
     tf = result.get("trend_fit") or {}
     score = tf.get("score", "")
     score_str = f"{score}/100" if score != "" else "(미평가)"
     dd = m["dday"]
-    deadline_disp = result.get("deadline", "") + (f" ({dd})" if dd else "")
-    cats = ", ".join(result.get("categories") or []) or "(명시 없음)"
-    trends = ", ".join(tf.get("aligned_trends") or []) or "(명시 없음)"
+    deadline_disp = _line(result.get("deadline", "")) + (f" ({dd})" if dd else "")
+    cats = ", ".join(_line(c) for c in (result.get("categories") or [])) or "(명시 없음)"
+    trends = ", ".join(_line(t) for t in (tf.get("aligned_trends") or [])) or "(명시 없음)"
     ideas = result.get("ideas") or []
     ideas_md = "\n\n".join(_idea_block(i) for i in ideas) or "- (없음)"
 
-    return f"""{MARKER} {url} -->
+    return f"""{MARKER} {safe_url} -->
 {META} {json.dumps(m, ensure_ascii=False)} -->
-## {result.get("title", "(제목 없음)")}
+## {m["title"]}
 
-- 주최: {result.get("host", "")} / 주관: {result.get("organizer", "")}
+- 주최: {_line(result.get("host", ""))} / 주관: {_line(result.get("organizer", ""))}
 - 마감: {deadline_disp or "(명시 없음)"}
 - 트렌드 적합: {score_str}
-- 자격: {result.get("eligibility", "(명시 없음)")}
+- 자격: {_line(result.get("eligibility", "(명시 없음)"))}
 - 부문: {cats}
 - 분석일: {m["analyzed"]}
-- 링크: {url}
+- 링크: {safe_url}
 
-> {result.get("summary", "")}
+> {_safe(result.get("summary", ""))}
 
 ### 심사 기준
 {_bullets(result.get("judging_criteria"))}
@@ -97,7 +113,7 @@ def render_section(result: dict, url: str, today: dt.date) -> str:
 
 ### 트렌드 적합 ({score_str})
 - 연관 트렌드: {trends}
-- 앵글: {tf.get("angle", "(명시 없음)")}
+- 앵글: {_safe(tf.get("angle", "(명시 없음)"))}
 
 ### 아이디어
 {ideas_md}
@@ -135,7 +151,7 @@ def _index_table(sections: list[str]) -> str:
         cell = (deadline + (f" ({dd})" if dd else "")).strip() or "(미정)"
         trend = m.get("trend_score", "")
         trend_cell = f"{trend}/100" if trend != "" else "-"
-        row = f"| {m.get('title', '')} | {cell} | {trend_cell} | [링크]({m.get('url', '')}) | {m.get('analyzed', '')} |"
+        row = f"| {_cell(m.get('title', ''))} | {_cell(cell)} | {trend_cell} | [링크]({_line(m.get('url', ''))}) | {m.get('analyzed', '')} |"
         rows.append((m.get("deadline_iso", "") or "", row))
     rows.sort(key=lambda r: (r[0] == "", r[0]))  # 마감 임박순, 미정은 뒤
     body = "\n".join(r[1] for r in rows) or "| (없음) |  |  |  |  |"
@@ -159,8 +175,9 @@ def append_to_log(result: dict, url: str, today: dt.date, log_path=DEFAULT_LOG) 
     existing = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
     sections = _split_sections(existing)
     new_section = render_section(result, url, today)
+    key = _line(url)  # 마커에 저장되는 형태와 동일하게 비교(업서트 일관성)
     for i, s in enumerate(sections):
-        if _section_url(s) == url:
+        if _section_url(s) == key:
             sections[i] = new_section
             break
     else:

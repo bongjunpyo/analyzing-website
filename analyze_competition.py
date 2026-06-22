@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import sys
 import asyncio
+from urllib.parse import urlparse
 
 import anthropic
 from playwright.async_api import async_playwright
@@ -119,7 +120,9 @@ SCHEMA = {
 
 
 async def fetch_url(url: str) -> str:
-    """Playwright로 렌더링된 HTML 반환."""
+    """Playwright로 렌더링된 HTML 반환. http(s) 외 스킴은 거부(로컬파일/스킴 악용 방지)."""
+    if urlparse(url).scheme.lower() not in ("http", "https"):
+        raise ValueError(f"http/https URL만 허용됩니다: {url!r}")
     async with async_playwright() as p:
         try:
             browser = await p.chromium.launch(args=["--disable-dev-shm-usage"])
@@ -165,8 +168,19 @@ def analyze(client: anthropic.Anthropic, model: str, url: str, text: str, want_i
         system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_msg}],
     )
-    out = next(b.text for b in resp.content if b.type == "text")
-    return json.loads(out)
+    out = _first_text(resp.content)
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"구조화 출력 JSON 파싱 실패: {e}") from e
+
+
+def _first_text(content) -> str:
+    """응답 콘텐츠 블록에서 첫 text 블록 반환. 없으면 명확한 에러(StopIteration 방지)."""
+    for b in content:
+        if getattr(b, "type", None) == "text":
+            return b.text
+    raise RuntimeError("모델 응답에 text 블록이 없습니다 (거부/토큰 한도/stop_reason 확인).")
 
 
 def build_parser() -> argparse.ArgumentParser:
