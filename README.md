@@ -23,6 +23,7 @@ analyze(Claude json_schema 구조화 + 프롬프트 캐싱) ->
 - `obsidian_log.py` — 옵시디언 단일 러닝 로그 기록(표준 라이브러리만)
   - `render_section(result, url, today)`: 사람이 읽는 마크다운 섹션
   - `append_to_log(result, url, today, log_path)`: 같은 URL이면 교체(업서트) + 상단 인덱스 표 재생성
+- `report.py` — 러닝 로그를 파싱해 수집 통계 리포트 생성(표준 라이브러리만)
 - `tests/` — pytest (네트워크/크레딧 불필요한 순수 함수 검증)
 
 > `extract_text`, `analyze`, `fetch_url`는 `contest_hunter` 패키지가 공유하므로 시그니처를 보존한다.
@@ -45,6 +46,24 @@ submissions/judging_criteria/schedule/contact/summary)에 더해:
 - 구조: frontmatter(`tags: [공모전, 분석로그]`) + **상단 인덱스 표**(마감 임박순) + 공고별 섹션
 - **업서트**: 같은 URL을 다시 분석하면 해당 섹션만 교체(중복 없음), 인덱스 표 자동 재생성
 - 섹션 식별/메타는 `<!-- src: ... -->` `<!-- meta: ... -->` 주석으로 저장(프리뷰에 안 보임)
+
+## 통계 리포트
+
+`report.py`는 누적된 러닝 로그(`_분석로그.md`)를 파싱해 **수집 공고 통계**를 마크다운으로 출력한다.
+네트워크·API 키 불필요(순수 파싱). 집계 항목:
+
+- **분야별 건수** — 각 공고의 `- 부문:` 라인 기준
+- **상금 분포** — 섹션 본문 원문 금액 표현을 정규식으로 추출(억/천만/만원 → 만원 단위), 최대 금액 기준(휴리스틱)
+- **마감 D-day 분포** — `deadline_iso`와 기준일로 임박/D-8~30/D-31~90/D-90 초과/마감됨/미정 버킷
+- **트렌드 적합도 분포** — `trend_fit.score` 90-100/70-89/50-69/50 미만 버킷
+
+```bash
+# 기본 로그(~/Documents/Obsidian Vault/공모전/_분석로그.md) 리포트
+python report.py
+
+# 로그 경로 지정 → 파일로 저장
+python report.py /path/to/_분석로그.md > 통계리포트.md
+```
 
 ## 설치
 
