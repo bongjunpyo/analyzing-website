@@ -5,6 +5,19 @@
 
 하드코딩된 대회/파트너사 URL 없음 — 어떤 공고 페이지에도 동작.
 
+## Claude Code 스킬로 사용
+
+레포 루트의 `SKILL.md` 가 이 도구를 Claude Code 스킬로 노출한다. 설치:
+
+```bash
+git clone https://github.com/bongjunpyo/analyzing-website.git ~/analyzing-website
+ln -s ../../analyzing-website ~/.claude/skills/analyzing-website
+```
+
+기본 동작은 **무크레딧 모드** — `fetch_text.py` 로 본문만 뽑아 Claude 가 직접 분석하고
+`log_result.py` 로 기록하므로 Anthropic API 키·크레딧이 필요 없다.
+크레딧이 있으면 `analyze_competition.py` 로 전 과정을 자동화할 수 있다(아래 CLI 사용법).
+
 ## 흐름
 
 ```
@@ -15,6 +28,9 @@ analyze(Claude json_schema 구조화 + 프롬프트 캐싱) ->
 
 ## 파일
 
+- `SKILL.md` — Claude Code 스킬 정의(무크레딧 모드 기본, API 모드 대안)
+- `fetch_text.py` — URL -> 본문 텍스트(stdout). API 키 불필요
+- `log_result.py` — 결과 JSON -> 옵시디언 로그 업서트. API 키 불필요
 - `analyze_competition.py` — 분석 코어 + CLI
   - `fetch_url(url)`: Playwright(chromium)로 렌더링된 HTML
   - `extract_text(html, max_chars=16000)`: 본문 텍스트 추출(토큰 절약)
